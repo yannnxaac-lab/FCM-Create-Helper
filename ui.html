@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FCM Batch Generator</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 16px;
+        color: var(--figma-color-text, #111);
+        background: var(--figma-color-bg, #fff);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+      }
+
+      p,
+      li,
+      label,
+      input,
+      button,
+      table {
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .section {
+        margin-top: 16px;
+        padding: 12px;
+        border: 1px solid var(--figma-color-border, #ddd);
+        border-radius: 10px;
+      }
+
+      .section:first-of-type {
+        margin-top: 0;
+      }
+
+      .row {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .row.two {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      input[type="file"],
+      input[type="number"] {
+        width: 100%;
+      }
+
+      .status {
+        margin-top: 8px;
+        padding: 8px 10px;
+        background: var(--figma-color-bg-secondary, #f5f5f5);
+        border-radius: 8px;
+      }
+
+      .status strong {
+        display: inline-block;
+        margin-right: 6px;
+      }
+
+      .muted {
+        color: var(--figma-color-text-secondary, #666);
+      }
+
+      .warning-list {
+        margin: 8px 0 0;
+        padding-left: 18px;
+      }
+
+      .button-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+      }
+
+      button.primary {
+        color: white;
+        background: #0d99ff;
+      }
+
+      button.secondary {
+        background: var(--figma-color-bg-secondary, #f5f5f5);
+        color: inherit;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+      }
+
+      th,
+      td {
+        padding: 6px 4px;
+        border-bottom: 1px solid var(--figma-color-border, #ddd);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>FCM 批量起稿</h1>
+    <p class="muted">先选中一个 <code>FCM模版</code>，或确保当前页面里存在同名模板节点。</p>
+
+    <div class="section">
+      <strong>模板状态</strong>
+      <div class="status" id="templateStatus">正在检查模板...</div>
+    </div>
+
+    <div class="section">
+      <strong>1. 上传 CSV</strong>
+      <div class="row">
+        <label>
+          CSV 文件
+          <input id="csvInput" type="file" accept=".csv,text/csv" />
+        </label>
+      </div>
+      <div class="status">
+        <div><strong>格式要求</strong><span class="muted">支持表头：<code>id,song,artist</code></span></div>
+        <div class="muted">也兼容中文表头：<code>序号,歌名,歌手</code></div>
+      </div>
+      <div class="status" id="csvStatus">尚未加载 CSV。</div>
+    </div>
+
+    <div class="section">
+      <strong>2. 上传人物图</strong>
+      <div class="row">
+        <label>
+          图片文件
+          <input id="imageInput" type="file" accept="image/*" multiple />
+        </label>
+      </div>
+      <div class="row">
+        <label>
+          <input id="removeBgInput" type="checkbox" />
+          试验版本地去背
+        </label>
+      </div>
+      <div class="status">
+        <div class="muted">图片文件名请使用序号，例如 <code>001.jpg</code>、<code>002.png</code>。</div>
+        <div class="muted">开启本地去背后，第一次使用需要联网下载模型，之后由插件本地计算，速度会慢一些。</div>
+      </div>
+      <div class="status" id="imageStatus">尚未加载图片。</div>
+    </div>
+
+    <div class="section">
+      <strong>3. 批量布局</strong>
+      <div class="row two">
+        <label>
+          每行列数
+          <input id="columnsInput" type="number" min="1" max="10" value="5" />
+        </label>
+        <label>
+          横向间距
+          <input id="gapXInput" type="number" min="0" max="400" value="48" />
+        </label>
+      </div>
+      <div class="row two">
+        <label>
+          纵向间距
+          <input id="gapYInput" type="number" min="0" max="400" value="48" />
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <strong>匹配结果</strong>
+      <div class="status" id="matchStatus">等待 CSV 和图片。</div>
+      <ul class="warning-list" id="warningList"></ul>
+      <table id="previewTable" hidden>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>歌名</th>
+            <th>歌手</th>
+            <th>图片</th>
+            <th>状态</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="button-row">
+      <button id="generateButton" class="primary" disabled>生成草稿</button>
+      <button id="closeButton" class="secondary">关闭</button>
+    </div>
+
+    <script>
+      const state = {
+        templateName: null,
+        csvRows: [],
+        csvFileName: "",
+        imageMap: new Map(),
+        duplicateImageIds: [],
+        csvIssues: [],
+        imageIssues: [],
+        matches: []
+      };
+
+      const LOCAL_SEGMENTER_MODEL_URL =
+        "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
+      const MEDIAPIPE_REMOTE_MODULE_URL =
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/vision_bundle.mjs";
+      const MEDIAPIPE_REMOTE_WASM_URL =
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm";
+      let localSegmenterPromise = null;
+
+      const templateStatus = document.getElementById("templateStatus");
+      const csvInput = document.getElementById("csvInput");
+      const csvStatus = document.getElementById("csvStatus");
+      const imageInput = document.getElementById("imageInput");
+      const imageStatus = document.getElementById("imageStatus");
+      const matchStatus = document.getElementById("matchStatus");
+      const warningList = document.getElementById("warningList");
+      const previewTable = document.getElementById("previewTable");
+      const previewBody = previewTable.querySelector("tbody");
+      const generateButton = document.getElementById("generateButton");
+      const closeButton = document.getElementById("closeButton");
+      const columnsInput = document.getElementById("columnsInput");
+      const gapXInput = document.getElementById("gapXInput");
+      const gapYInput = document.getElementById("gapYInput");
+      const removeBgInput = document.getElementById("removeBgInput");
+
+      csvInput.addEventListener("change", handleCsvInput);
+      imageInput.addEventListener("change", handleImageInput);
+      generateButton.addEventListener("click", handleGenerate);
+      closeButton.addEventListener("click", () => {
+        parent.postMessage({ pluginMessage: { type: "close-plugin" } }, "*");
+      });
+
+      window.onmessage = (event) => {
+        const message = event.data.pluginMessage;
+        if (!message) {
+          return;
+        }
+
+        if (message.type === "template-status") {
+          state.templateName = message.templateName || null;
+          render();
+          return;
+        }
+
+        if (message.type === "generate-complete") {
+          const issueCount = Array.isArray(message.issues) ? message.issues.length : 0;
+          const summary = issueCount
+            ? `已生成 ${message.count} 张草稿，另有 ${issueCount} 个提醒。`
+            : `已生成 ${message.count} 张草稿。`;
+          matchStatus.textContent = summary;
+          renderWarnings(message.issues || []);
+        }
+      };
+
+      async function handleCsvInput() {
+        const [file] = csvInput.files || [];
+        if (!file) {
+          return;
+        }
+
+        const text = await file.text();
+        const { rows, issues } = parseCsvText(text);
+        state.csvRows = rows;
+        state.csvFileName = file.name;
+        state.csvIssues = issues;
+        rebuildMatches();
+        render();
+      }
+
+      async function handleImageInput() {
+        const files = Array.from(imageInput.files || []);
+        const imageMap = new Map();
+        const duplicateImageIds = [];
+        const imageIssues = [];
+        const shouldRemoveBackground = Boolean(removeBgInput.checked);
+
+        imageStatus.textContent = shouldRemoveBackground
+          ? "正在处理图片并尝试本地去背..."
+          : "正在处理图片...";
+
+        for (let index = 0; index < files.length; index += 1) {
+          const file = files[index];
+          const rawId = file.name.replace(/\.[^.]+$/, "");
+          const normalizedId = normalizeId(rawId);
+          imageStatus.textContent = shouldRemoveBackground
+            ? `正在处理第 ${index + 1}/${files.length} 张，并进行本地去背...`
+            : `正在处理第 ${index + 1}/${files.length} 张图片...`;
+
+          let normalizedImage;
+          try {
+            normalizedImage = await normalizeImageForFigma(file, {
+              zoomOutFactor: 1.14,
+              removeBackground: shouldRemoveBackground
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            imageIssues.push(`${file.name} 去背失败，已回退为原图导入：${message}`);
+            normalizedImage = await normalizeImageForFigma(file, {
+              zoomOutFactor: 1.14,
+              removeBackground: false
+            });
+          }
+
+          if (imageMap.has(normalizedId)) {
+            duplicateImageIds.push(rawId);
+          }
+
+          imageMap.set(normalizedId, {
+            rawId,
+            fileName: file.name,
+            bytes: normalizedImage.bytes,
+            colors: normalizedImage.colors
+          });
+        }
+
+        state.imageMap = imageMap;
+        state.duplicateImageIds = duplicateImageIds;
+        state.imageIssues = imageIssues;
+        rebuildMatches();
+        render();
+
+        if (shouldRemoveBackground) {
+          imageStatus.textContent = imageIssues.length
+            ? `本地去背已完成，但有 ${imageIssues.length} 张回退为原图导入。`
+            : `本地去背已完成，共处理 ${imageMap.size} 张图片。`;
+        }
+      }
+
+      function rebuildMatches() {
+        state.matches = state.csvRows.map((row) => {
+          const image = state.imageMap.get(row.normalizedId) || null;
+          return { ...row, image };
+        });
+      }
+
+      function render() {
+        templateStatus.textContent = state.templateName
+          ? `当前可用模板：${state.templateName}`
+          : "未找到模板。请先选中一个模板节点，或确保当前页有一个名为“FCM模版”的节点。";
+
+        csvStatus.textContent = state.csvRows.length
+          ? `${state.csvFileName}，已读取 ${state.csvRows.length} 条记录。`
+          : "尚未加载 CSV。";
+
+        imageStatus.textContent = state.imageMap.size
+          ? `已读取 ${state.imageMap.size} 张图片。`
+          : "尚未加载图片。";
+
+        const matchedCount = state.matches.filter((item) => item.image).length;
+        const missingCount = state.matches.filter((item) => !item.image).length;
+        const extraImages = Array.from(state.imageMap.values()).filter((image) => {
+          return !state.csvRows.some((row) => row.normalizedId === normalizeId(image.rawId));
+        });
+
+        if (!state.csvRows.length && !state.imageMap.size) {
+          matchStatus.textContent = "等待 CSV 和图片。";
+        } else {
+          matchStatus.textContent = `可生成 ${matchedCount} 条，缺图 ${missingCount} 条，多余图片 ${extraImages.length} 张。`;
+        }
+
+        const warnings = [];
+        warnings.push(...state.csvIssues);
+        warnings.push(...state.imageIssues);
+
+        if (state.duplicateImageIds.length) {
+          warnings.push(`发现重复图片序号：${state.duplicateImageIds.join(", ")}`);
+        }
+
+        if (missingCount) {
+          const missingIds = state.matches
+            .filter((item) => !item.image)
+            .map((item) => item.id);
+          warnings.push(`这些序号缺少对应图片：${missingIds.join(", ")}`);
+        }
+
+        if (extraImages.length) {
+          warnings.push(`这些图片没有匹配到 CSV：${extraImages.map((item) => item.rawId).join(", ")}`);
+        }
+
+        renderWarnings(warnings);
+        renderTable();
+
+        generateButton.disabled = !(state.templateName && matchedCount > 0);
+      }
+
+      function renderWarnings(warnings) {
+        warningList.innerHTML = "";
+        if (!warnings.length) {
+          return;
+        }
+
+        for (const warning of warnings) {
+          const item = document.createElement("li");
+          item.textContent = warning;
+          warningList.appendChild(item);
+        }
+      }
+
+      function renderTable() {
+        previewBody.innerHTML = "";
+        if (!state.matches.length) {
+          previewTable.hidden = true;
+          return;
+        }
+
+        previewTable.hidden = false;
+        for (const item of state.matches.slice(0, 20)) {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${escapeHtml(item.id)}</td>
+            <td>${escapeHtml(item.song)}</td>
+            <td>${escapeHtml(item.artist)}</td>
+            <td>${escapeHtml(item.image ? item.image.fileName : "-")}</td>
+            <td>${item.image ? "已匹配" : "缺图"}</td>
+          `;
+          previewBody.appendChild(row);
+        }
+      }
+
+      function handleGenerate() {
+        const matchedEntries = state.matches
+          .filter((item) => item.image)
+          .map((item) => ({
+            id: item.id,
+            song: item.song,
+            artist: item.artist,
+            imageBytes: item.image.bytes,
+            colors: item.image.colors
+          }));
+
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "generate-batch",
+              payload: {
+                entries: matchedEntries,
+                columns: Number.parseInt(columnsInput.value, 10) || 5,
+                gapX: Number.parseInt(gapXInput.value, 10) || 48,
+                gapY: Number.parseInt(gapYInput.value, 10) || 48
+              }
+            }
+          },
+          "*"
+        );
+      }
+
+      function parseCsvText(text) {
+        const matrix = parseCsvMatrix(text);
+        const rows = matrix.filter((row) => row.some((cell) => cell.trim() !== ""));
+        const issues = [];
+
+        if (!rows.length) {
+          return { rows: [], issues: ["CSV 为空或无法识别。"] };
+        }
+
+        const headerMap = detectHeaderMap(rows[0]);
+        const dataRows = headerMap.hasHeader ? rows.slice(1) : rows;
+        const parsedRows = [];
+
+        for (let index = 0; index < dataRows.length; index += 1) {
+          const row = dataRows[index];
+          const id = (row[headerMap.id] || "").trim();
+          const song = (row[headerMap.song] || "").trim();
+          const artist = (row[headerMap.artist] || "").trim();
+
+          if (!id && !song && !artist) {
+            continue;
+          }
+
+          if (!id || !song || !artist) {
+            issues.push(`第 ${index + 1} 条数据不完整，请检查 id/song/artist。`);
+            continue;
+          }
+
+          parsedRows.push({
+            id,
+            normalizedId: normalizeId(id),
+            song,
+            artist
+          });
+        }
+
+        return { rows: parsedRows, issues };
+      }
+
+      function detectHeaderMap(firstRow) {
+        const normalized = firstRow.map((cell) => cell.trim().toLowerCase());
+        const idIndex = findHeaderIndex(normalized, ["id", "index", "序号"]);
+        const songIndex = findHeaderIndex(normalized, ["song", "title", "歌名"]);
+        const artistIndex = findHeaderIndex(normalized, ["artist", "singer", "歌手"]);
+        const hasHeader = idIndex !== -1 || songIndex !== -1 || artistIndex !== -1;
+
+        if (hasHeader) {
+          return {
+            hasHeader: true,
+            id: idIndex !== -1 ? idIndex : 0,
+            song: songIndex !== -1 ? songIndex : 1,
+            artist: artistIndex !== -1 ? artistIndex : 2
+          };
+        }
+
+        return {
+          hasHeader: false,
+          id: 0,
+          song: 1,
+          artist: 2
+        };
+      }
+
+      function findHeaderIndex(normalizedHeaders, candidates) {
+        for (const candidate of candidates) {
+          const index = normalizedHeaders.indexOf(candidate);
+          if (index !== -1) {
+            return index;
+          }
+        }
+        return -1;
+      }
+
+      function parseCsvMatrix(text) {
+        const rows = [];
+        let row = [];
+        let cell = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i += 1) {
+          const char = text[i];
+          const next = text[i + 1];
+
+          if (char === "\"") {
+            if (inQuotes && next === "\"") {
+              cell += "\"";
+              i += 1;
+            } else {
+              inQuotes = !inQuotes;
+            }
+            continue;
+          }
+
+          if (char === "," && !inQuotes) {
+            row.push(cell);
+            cell = "";
+            continue;
+          }
+
+          if ((char === "\n" || char === "\r") && !inQuotes) {
+            if (char === "\r" && next === "\n") {
+              i += 1;
+            }
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = "";
+            continue;
+          }
+
+          cell += char;
+        }
+
+        if (cell.length || row.length) {
+          row.push(cell);
+          rows.push(row);
+        }
+
+        return rows;
+      }
+
+      function normalizeId(value) {
+        const cleaned = String(value || "")
+          .trim()
+          .replace(/\.[^.]+$/, "");
+
+        if (/^\d+$/.test(cleaned)) {
+          return String(Number.parseInt(cleaned, 10));
+        }
+
+        return cleaned.toLowerCase();
+      }
+
+      async function deriveDraftColors(file) {
+        const url = URL.createObjectURL(file);
+        try {
+          const image = await loadImage(url);
+          const canvas = document.createElement("canvas");
+          const context = canvas.getContext("2d");
+          const width = 64;
+          const height = 64;
+          canvas.width = width;
+          canvas.height = height;
+          context.drawImage(image, 0, 0, width, height);
+
+          const sample = sampleRegion(context, {
+            x: 16,
+            y: 24,
+            width: 32,
+            height: 32
+          });
+          const hsl = rgbToHsl(sample.r, sample.g, sample.b);
+          const hue = hsl.h;
+          const saturation = clamp(hsl.s * 0.75, 0.16, 0.42);
+
+          return {
+            background: {
+              start: hslToRgbObject(hue, saturation * 0.9, 0.18),
+              end: hslToRgbObject(hue, saturation * 0.75, 0.28)
+            },
+            bigCircle: {
+              start: hslToRgbObject(hue, saturation * 0.85, 0.25),
+              end: hslToRgbObject(hue, saturation * 0.7, 0.38)
+            },
+            smallCircle: {
+              start: hslToRgbObject(hue, saturation * 0.8, 0.35),
+              end: hslToRgbObject(hue, saturation * 0.65, 0.48)
+            }
+          };
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      async function normalizeImageForFigma(file, options = {}) {
+        const colors = await deriveDraftColors(file);
+        const zoomOutFactor = Math.max(1, Number(options.zoomOutFactor) || 1);
+        const shouldRemoveBackground = Boolean(options.removeBackground);
+
+        const url = URL.createObjectURL(file);
+        try {
+          const image = await loadImage(url);
+          const alreadyTransparent = imageHasMeaningfulTransparency(image);
+          const source = shouldRemoveBackground
+            ? (alreadyTransparent ? image : await removeBackgroundLocally(image))
+            : image;
+
+          return {
+            bytes: await renderImageWithPadding(source, zoomOutFactor),
+            colors
+          };
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+
+      async function getLocalImageSegmenter() {
+        if (!localSegmenterPromise) {
+          localSegmenterPromise = (async () => {
+            const vision = await loadVisionRuntime();
+            const visionFileset = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_REMOTE_WASM_URL);
+            const segmenter = await vision.ImageSegmenter.createFromOptions(visionFileset, {
+              baseOptions: {
+                modelAssetPath: LOCAL_SEGMENTER_MODEL_URL,
+                delegate: "CPU"
+              },
+              runningMode: "IMAGE",
+              outputCategoryMask: true,
+              outputConfidenceMasks: false
+            });
+
+            return {
+              segmenter,
+              labels: segmenter.getLabels() || []
+            };
+          })().catch((error) => {
+            localSegmenterPromise = null;
+            throw error;
+          });
+        }
+
+        return localSegmenterPromise;
+      }
+
+      async function loadVisionRuntime() {
+        try {
+          return await import(MEDIAPIPE_REMOTE_MODULE_URL);
+        } catch (remoteError) {
+          const localModuleUrl = new URL("./vendor/mediapipe/vision_bundle.mjs", window.location.href).href;
+          try {
+            return await import(localModuleUrl);
+          } catch (localError) {
+            const remoteMessage = remoteError instanceof Error ? remoteError.message : String(remoteError);
+            const localMessage = localError instanceof Error ? localError.message : String(localError);
+            throw new Error(`运行库加载失败。远程：${remoteMessage}；本地：${localMessage}`);
+          }
+        }
+      }
+
+      async function removeBackgroundLocally(image) {
+        const { segmenter, labels } = await getLocalImageSegmenter();
+        const result = segmenter.segment(image);
+
+        try {
+          if (!result.categoryMask) {
+            throw new Error("模型没有返回可用的分割蒙版。");
+          }
+
+          const categoryMask = result.categoryMask;
+          const maskData = categoryMask.getAsUint8Array();
+          const foregroundSet = buildForegroundCategorySet(labels);
+          const refinedBinaryMask = refineBinaryMask(
+            maskData,
+            categoryMask.width,
+            categoryMask.height,
+            foregroundSet,
+            labels.length
+          );
+          const binaryMaskCanvas = document.createElement("canvas");
+          const binaryMaskContext = binaryMaskCanvas.getContext("2d");
+          binaryMaskCanvas.width = categoryMask.width;
+          binaryMaskCanvas.height = categoryMask.height;
+
+          const maskImageData = binaryMaskContext.createImageData(categoryMask.width, categoryMask.height);
+          for (let i = 0; i < refinedBinaryMask.length; i += 1) {
+            const alpha = refinedBinaryMask[i] ? 255 : 0;
+            const offset = i * 4;
+            maskImageData.data[offset] = 255;
+            maskImageData.data[offset + 1] = 255;
+            maskImageData.data[offset + 2] = 255;
+            maskImageData.data[offset + 3] = alpha;
+          }
+          binaryMaskContext.putImageData(maskImageData, 0, 0);
+
+          const sourceWidth = image.naturalWidth || image.width;
+          const sourceHeight = image.naturalHeight || image.height;
+          const fullMaskCanvas = document.createElement("canvas");
+          const fullMaskContext = fullMaskCanvas.getContext("2d");
+          fullMaskCanvas.width = sourceWidth;
+          fullMaskCanvas.height = sourceHeight;
+          fullMaskContext.imageSmoothingEnabled = true;
+          fullMaskContext.filter = "blur(1.2px)";
+          fullMaskContext.drawImage(binaryMaskCanvas, 0, 0, sourceWidth, sourceHeight);
+
+          const outputCanvas = document.createElement("canvas");
+          const outputContext = outputCanvas.getContext("2d");
+          outputCanvas.width = sourceWidth;
+          outputCanvas.height = sourceHeight;
+          outputContext.clearRect(0, 0, sourceWidth, sourceHeight);
+          outputContext.drawImage(image, 0, 0, sourceWidth, sourceHeight);
+          outputContext.globalCompositeOperation = "destination-in";
+          outputContext.drawImage(fullMaskCanvas, 0, 0, sourceWidth, sourceHeight);
+          outputContext.globalCompositeOperation = "source-over";
+
+          return outputCanvas;
+        } finally {
+          result.close();
+        }
+      }
+
+      function buildForegroundCategorySet(labels) {
+        if (!labels.length) {
+          return null;
+        }
+
+        const foreground = new Set();
+        for (let index = 0; index < labels.length; index += 1) {
+          const label = String(labels[index] || "").trim().toLowerCase();
+          if (!label) {
+            if (index > 0) {
+              foreground.add(index);
+            }
+            continue;
+          }
+
+          if (!/(^background$|^bg$|unknown|other)/i.test(label)) {
+            foreground.add(index);
+          }
+        }
+
+        return foreground;
+      }
+
+      function shouldKeepSegmentPixel(categoryIndex, foregroundSet, labelCount) {
+        if (foregroundSet && foregroundSet.size) {
+          return foregroundSet.has(categoryIndex);
+        }
+
+        if (labelCount > 1) {
+          return categoryIndex > 0;
+        }
+
+        return categoryIndex > 0;
+      }
+
+      function refineBinaryMask(maskData, width, height, foregroundSet, labelCount) {
+        let binary = new Uint8Array(maskData.length);
+
+        for (let i = 0; i < maskData.length; i += 1) {
+          binary[i] = shouldKeepSegmentPixel(maskData[i], foregroundSet, labelCount) ? 1 : 0;
+        }
+
+        // Close small holes first so glasses and other tiny accessories are less likely to disappear.
+        binary = erodeBinaryMask(dilateBinaryMask(binary, width, height, 1), width, height, 1);
+
+        // Add a very small extra expansion to keep fragile edges from breaking apart.
+        binary = dilateBinaryMask(binary, width, height, 1);
+
+        return binary;
+      }
+
+      function dilateBinaryMask(source, width, height, radius) {
+        const output = new Uint8Array(source.length);
+
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            let found = 0;
+            for (let offsetY = -radius; offsetY <= radius && !found; offsetY += 1) {
+              const sampleY = y + offsetY;
+              if (sampleY < 0 || sampleY >= height) {
+                continue;
+              }
+
+              for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+                const sampleX = x + offsetX;
+                if (sampleX < 0 || sampleX >= width) {
+                  continue;
+                }
+
+                if (source[sampleY * width + sampleX]) {
+                  found = 1;
+                  break;
+                }
+              }
+            }
+
+            output[y * width + x] = found;
+          }
+        }
+
+        return output;
+      }
+
+      function erodeBinaryMask(source, width, height, radius) {
+        const output = new Uint8Array(source.length);
+
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            let keep = 1;
+            for (let offsetY = -radius; offsetY <= radius && keep; offsetY += 1) {
+              const sampleY = y + offsetY;
+              if (sampleY < 0 || sampleY >= height) {
+                keep = 0;
+                break;
+              }
+
+              for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+                const sampleX = x + offsetX;
+                if (sampleX < 0 || sampleX >= width) {
+                  keep = 0;
+                  break;
+                }
+
+                if (!source[sampleY * width + sampleX]) {
+                  keep = 0;
+                  break;
+                }
+              }
+            }
+
+            output[y * width + x] = keep;
+          }
+        }
+
+        return output;
+      }
+
+      async function renderImageWithPadding(imageSource, zoomOutFactor) {
+        const sourceWidth = imageSource.naturalWidth || imageSource.videoWidth || imageSource.width;
+        const sourceHeight = imageSource.naturalHeight || imageSource.videoHeight || imageSource.height;
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        canvas.width = Math.max(1, Math.round(sourceWidth * zoomOutFactor));
+        canvas.height = Math.max(1, Math.round(sourceHeight * zoomOutFactor));
+
+        const offsetX = (canvas.width - sourceWidth) / 2;
+        const offsetY = (canvas.height - sourceHeight) / 2;
+
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(imageSource, offsetX, offsetY, sourceWidth, sourceHeight);
+
+        const blob = await canvasToBlob(canvas, "image/png");
+        return new Uint8Array(await blob.arrayBuffer());
+      }
+
+      function imageHasMeaningfulTransparency(imageSource) {
+        const sourceWidth = imageSource.naturalWidth || imageSource.videoWidth || imageSource.width;
+        const sourceHeight = imageSource.naturalHeight || imageSource.videoHeight || imageSource.height;
+        const sampleCanvas = document.createElement("canvas");
+        const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+        const sampleWidth = 64;
+        const sampleHeight = Math.max(1, Math.round((sourceHeight / Math.max(1, sourceWidth)) * sampleWidth));
+        sampleCanvas.width = sampleWidth;
+        sampleCanvas.height = sampleHeight;
+        sampleContext.clearRect(0, 0, sampleWidth, sampleHeight);
+        sampleContext.drawImage(imageSource, 0, 0, sampleWidth, sampleHeight);
+
+        const { data } = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight);
+        let transparentPixels = 0;
+
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] < 245) {
+            transparentPixels += 1;
+          }
+        }
+
+        return transparentPixels > sampleWidth;
+      }
+
+      function sampleRegion(context, region) {
+        const { data } = context.getImageData(region.x, region.y, region.width, region.height);
+        let red = 0;
+        let green = 0;
+        let blue = 0;
+        let count = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const alpha = data[i + 3] / 255;
+          if (alpha < 0.2) {
+            continue;
+          }
+          red += data[i] * alpha;
+          green += data[i + 1] * alpha;
+          blue += data[i + 2] * alpha;
+          count += alpha;
+        }
+
+        if (!count) {
+          return { r: 80, g: 90, b: 110 };
+        }
+
+        return {
+          r: red / count,
+          g: green / count,
+          b: blue / count
+        };
+      }
+
+      function loadImage(url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = reject;
+          image.src = url;
+        });
+      }
+
+      function canvasToBlob(canvas, type) {
+        return new Promise((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error("图片格式转换失败。"));
+              return;
+            }
+            resolve(blob);
+          }, type);
+        });
+      }
+
+      function rgbToHsl(r, g, b) {
+        const red = r / 255;
+        const green = g / 255;
+        const blue = b / 255;
+        const max = Math.max(red, green, blue);
+        const min = Math.min(red, green, blue);
+        const lightness = (max + min) / 2;
+        let hue = 0;
+        let saturation = 0;
+
+        if (max !== min) {
+          const delta = max - min;
+          saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+
+          switch (max) {
+            case red:
+              hue = (green - blue) / delta + (green < blue ? 6 : 0);
+              break;
+            case green:
+              hue = (blue - red) / delta + 2;
+              break;
+            default:
+              hue = (red - green) / delta + 4;
+          }
+
+          hue /= 6;
+        }
+
+        return { h: hue, s: saturation, l: lightness };
+      }
+
+      function hslToRgbObject(h, s, l) {
+        const { r, g, b } = hslToRgb(h, s, l);
+        return {
+          r,
+          g,
+          b,
+          a: 1
+        };
+      }
+
+      function hslToRgb(h, s, l) {
+        if (s === 0) {
+          return { r: l, g: l, b: l };
+        }
+
+        const hue2rgb = (p, q, t) => {
+          let value = t;
+          if (value < 0) value += 1;
+          if (value > 1) value -= 1;
+          if (value < 1 / 6) return p + (q - p) * 6 * value;
+          if (value < 1 / 2) return q;
+          if (value < 2 / 3) return p + (q - p) * (2 / 3 - value) * 6;
+          return p;
+        };
+
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+
+        return {
+          r: hue2rgb(p, q, h + 1 / 3),
+          g: hue2rgb(p, q, h),
+          b: hue2rgb(p, q, h - 1 / 3)
+        };
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll("\"", "&quot;");
+      }
+    </script>
+  </body>
+</html>
