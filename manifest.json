@@ -6,6 +6,27 @@
   "ui": "ui.html",
   "editorType": ["figma"],
   "networkAccess": {
-    "allowedDomains": ["https://storage.googleapis.com", "https://cdn.jsdelivr.net"]
+    "allowedDomains": [
+      "https://api.coze.cn",
+      "https://s.coze.cn",
+      "https://p1-official-plugin-sign.byteimg.com",
+      "https://p2-official-plugin-sign.byteimg.com",
+      "https://p3-official-plugin-sign.byteimg.com",
+      "https://p4-official-plugin-sign.byteimg.com",
+      "https://p5-official-plugin-sign.byteimg.com",
+      "https://p6-official-plugin-sign.byteimg.com",
+      "https://p7-official-plugin-sign.byteimg.com",
+      "https://p8-official-plugin-sign.byteimg.com",
+      "https://p9-official-plugin-sign.byteimg.com",
+      "https://p1-bot-workflow-sign.byteimg.com",
+      "https://p2-bot-workflow-sign.byteimg.com",
+      "https://p3-bot-workflow-sign.byteimg.com",
+      "https://p4-bot-workflow-sign.byteimg.com",
+      "https://p5-bot-workflow-sign.byteimg.com",
+      "https://p6-bot-workflow-sign.byteimg.com",
+      "https://p7-bot-workflow-sign.byteimg.com",
+      "https://p8-bot-workflow-sign.byteimg.com",
+      "https://p9-bot-workflow-sign.byteimg.com"
+    ]
   }
 }

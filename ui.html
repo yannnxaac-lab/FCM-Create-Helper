@@ -57,8 +57,21 @@
       }
 
       input[type="file"],
-      input[type="number"] {
+      input[type="number"],
+      input[type="text"],
+      input[type="password"],
+      select {
         width: 100%;
+      }
+
+      .inline-label {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .inline-label input[type="checkbox"] {
+        width: auto;
       }
 
       .status {
@@ -86,6 +99,10 @@
         display: flex;
         gap: 8px;
         margin-top: 16px;
+      }
+
+      .button-row.compact {
+        margin-top: 8px;
       }
 
       button {
@@ -165,13 +182,49 @@
       </div>
       <div class="row">
         <label>
-          <input id="removeBgInput" type="checkbox" />
-          试验版本地去背
+          图片处理方式
+          <select id="imageModeInput">
+            <option value="coze">使用 Coze 工作流去背</option>
+            <option value="none">直接导入原图</option>
+          </select>
         </label>
+      </div>
+      <div class="section" id="cozeConfigSection" hidden>
+        <strong>Coze 去背配置</strong>
+        <div class="row">
+          <label>
+            Coze Token
+            <input id="cozeTokenInput" type="password" placeholder="粘贴新的 PAT / Bearer Token" />
+          </label>
+        </div>
+        <div class="button-row compact">
+          <button id="clearTokenButton" class="secondary" type="button">清除已保存 Token</button>
+        </div>
+        <div class="row two">
+          <label>
+            Workflow ID
+            <input id="cozeWorkflowInput" type="text" value="7628515841907015721" />
+          </label>
+          <label>
+            输入参数名
+            <input id="cozeInputKeyInput" type="text" value="create" />
+          </label>
+        </div>
+        <div class="row">
+          <label>
+            输出字段名
+            <input id="cozeOutputKeyInput" type="text" value="output" />
+          </label>
+        </div>
+        <div class="status">
+          <div class="muted">插件不会把 Token 写进代码。建议使用你刚重新生成的新 Token。</div>
+          <div class="muted">工作流会先上传图片，再把 <code>file_id</code> 传给 Coze 的 Image 输入参数。</div>
+        </div>
       </div>
       <div class="status">
         <div class="muted">图片文件名请使用序号，例如 <code>001.jpg</code>、<code>002.png</code>。</div>
-        <div class="muted">开启本地去背后，第一次使用需要联网下载模型，之后由插件本地计算，速度会慢一些。</div>
+        <div class="muted">透明 PNG 会自动保留透明背景，不会重复去背。</div>
+        <div class="muted">Coze 去背会先上传文件到你的 Coze 工作流，再取回抠图结果。</div>
       </div>
       <div class="status" id="imageStatus">尚未加载图片。</div>
     </div>
@@ -225,25 +278,30 @@
         csvRows: [],
         csvFileName: "",
         imageMap: new Map(),
+        processedImageMode: "none",
         duplicateImageIds: [],
         csvIssues: [],
         imageIssues: [],
-        matches: []
+        matches: [],
+        cozeRequests: new Map(),
+        nextCozeRequestId: 1
       };
 
-      const LOCAL_SEGMENTER_MODEL_URL =
-        "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite";
-      const MEDIAPIPE_REMOTE_MODULE_URL =
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/vision_bundle.mjs";
-      const MEDIAPIPE_REMOTE_WASM_URL =
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm";
-      let localSegmenterPromise = null;
-
+      const DEFAULT_COZE_WORKFLOW_ID = "7628515841907015721";
+      const DEFAULT_COZE_INPUT_KEY = "create";
+      const DEFAULT_COZE_OUTPUT_KEY = "output";
       const templateStatus = document.getElementById("templateStatus");
       const csvInput = document.getElementById("csvInput");
       const csvStatus = document.getElementById("csvStatus");
       const imageInput = document.getElementById("imageInput");
       const imageStatus = document.getElementById("imageStatus");
+      const imageModeInput = document.getElementById("imageModeInput");
+      const cozeConfigSection = document.getElementById("cozeConfigSection");
+      const cozeTokenInput = document.getElementById("cozeTokenInput");
+      const clearTokenButton = document.getElementById("clearTokenButton");
+      const cozeWorkflowInput = document.getElementById("cozeWorkflowInput");
+      const cozeInputKeyInput = document.getElementById("cozeInputKeyInput");
+      const cozeOutputKeyInput = document.getElementById("cozeOutputKeyInput");
       const matchStatus = document.getElementById("matchStatus");
       const warningList = document.getElementById("warningList");
       const previewTable = document.getElementById("previewTable");
@@ -253,16 +311,41 @@
       const columnsInput = document.getElementById("columnsInput");
       const gapXInput = document.getElementById("gapXInput");
       const gapYInput = document.getElementById("gapYInput");
-      const removeBgInput = document.getElementById("removeBgInput");
 
+      window.addEventListener("error", (event) => {
+        const message = event && event.message ? event.message : "脚本初始化失败。";
+        templateStatus.textContent = `插件脚本报错：${message}`;
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event && event.reason ? String(event.reason.message || event.reason) : "未知异步错误";
+        templateStatus.textContent = `插件脚本报错：${reason}`;
+      });
+
+      applyStoredSettings({});
       csvInput.addEventListener("change", handleCsvInput);
       imageInput.addEventListener("change", handleImageInput);
+      imageModeInput.addEventListener("change", handleImageModeChange);
+      cozeTokenInput.addEventListener("input", persistUiPreferences);
+      clearTokenButton.addEventListener("click", handleClearToken);
+      cozeWorkflowInput.addEventListener("input", persistUiPreferences);
+      cozeInputKeyInput.addEventListener("input", persistUiPreferences);
+      cozeOutputKeyInput.addEventListener("input", persistUiPreferences);
       generateButton.addEventListener("click", handleGenerate);
       closeButton.addEventListener("click", () => {
         parent.postMessage({ pluginMessage: { type: "close-plugin" } }, "*");
       });
+      toggleCozeConfig();
+      render();
+      parent.postMessage({ pluginMessage: { type: "ui-ready" } }, "*");
+      parent.postMessage({ pluginMessage: { type: "request-settings" } }, "*");
+      parent.postMessage({ pluginMessage: { type: "request-template-status" } }, "*");
+      setTimeout(() => {
+        if (!state.templateName) {
+          parent.postMessage({ pluginMessage: { type: "request-template-status" } }, "*");
+        }
+      }, 300);
 
-      window.onmessage = (event) => {
+      window.addEventListener("message", (event) => {
         const message = event.data.pluginMessage;
         if (!message) {
           return;
@@ -274,6 +357,24 @@
           return;
         }
 
+        if (message.type === "settings") {
+          applyStoredSettings(message.payload || {});
+          return;
+        }
+
+        if (message.type === "coze-remove-background-result") {
+          const pending = state.cozeRequests.get(message.requestId);
+          if (pending) {
+            state.cozeRequests.delete(message.requestId);
+            if (message.ok) {
+              pending.resolve(message.payload || {});
+            } else {
+              pending.reject(new Error(formatPluginError(message.error) || "Coze 去背失败。"));
+            }
+          }
+          return;
+        }
+
         if (message.type === "generate-complete") {
           const issueCount = Array.isArray(message.issues) ? message.issues.length : 0;
           const summary = issueCount
@@ -282,7 +383,50 @@
           matchStatus.textContent = summary;
           renderWarnings(message.issues || []);
         }
-      };
+      });
+
+      function applyStoredSettings(settings) {
+        imageModeInput.value = settings.imageMode || "coze";
+        cozeTokenInput.value = settings.token || "";
+        cozeWorkflowInput.value = settings.workflowId || DEFAULT_COZE_WORKFLOW_ID;
+        cozeInputKeyInput.value = settings.inputKey || DEFAULT_COZE_INPUT_KEY;
+        cozeOutputKeyInput.value = settings.outputKey || DEFAULT_COZE_OUTPUT_KEY;
+        toggleCozeConfig();
+        render();
+      }
+
+      function persistUiPreferences() {
+        parent.postMessage(
+          {
+            pluginMessage: {
+              type: "save-settings",
+              payload: {
+                imageMode: imageModeInput.value,
+                token: cozeTokenInput.value.trim(),
+                workflowId: cozeWorkflowInput.value.trim() || DEFAULT_COZE_WORKFLOW_ID,
+                inputKey: cozeInputKeyInput.value.trim() || DEFAULT_COZE_INPUT_KEY,
+                outputKey: cozeOutputKeyInput.value.trim() || DEFAULT_COZE_OUTPUT_KEY
+              }
+            }
+          },
+          "*"
+        );
+      }
+
+      function handleClearToken() {
+        cozeTokenInput.value = "";
+        persistUiPreferences();
+      }
+
+      function handleImageModeChange() {
+        persistUiPreferences();
+        toggleCozeConfig();
+        render();
+      }
+
+      function toggleCozeConfig() {
+        cozeConfigSection.hidden = imageModeInput.value !== "coze";
+      }
 
       async function handleCsvInput() {
         const [file] = csvInput.files || [];
@@ -304,32 +448,43 @@
         const imageMap = new Map();
         const duplicateImageIds = [];
         const imageIssues = [];
-        const shouldRemoveBackground = Boolean(removeBgInput.checked);
+        const imageMode = getSelectedImageMode();
+        const cozeConfig = imageMode === "coze" ? getCozeConfig() : null;
 
-        imageStatus.textContent = shouldRemoveBackground
-          ? "正在处理图片并尝试本地去背..."
-          : "正在处理图片...";
+        if (imageMode === "coze" && !cozeConfig.token) {
+          state.imageMap = new Map();
+          state.duplicateImageIds = [];
+          state.imageIssues = ["已选择 Coze 去背，但还没有填写 Coze Token。"];
+          rebuildMatches();
+          render();
+          return;
+        }
+
+        imageStatus.textContent = getImageLoadingText(imageMode, 0, files.length);
 
         for (let index = 0; index < files.length; index += 1) {
           const file = files[index];
           const rawId = file.name.replace(/\.[^.]+$/, "");
           const normalizedId = normalizeId(rawId);
-          imageStatus.textContent = shouldRemoveBackground
-            ? `正在处理第 ${index + 1}/${files.length} 张，并进行本地去背...`
-            : `正在处理第 ${index + 1}/${files.length} 张图片...`;
+          imageStatus.textContent = getImageLoadingText(imageMode, index + 1, files.length);
 
           let normalizedImage;
           try {
             normalizedImage = await normalizeImageForFigma(file, {
               zoomOutFactor: 1.14,
-              removeBackground: shouldRemoveBackground
+              mode: imageMode,
+              cozeConfig
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            imageIssues.push(`${file.name} 去背失败，已回退为原图导入：${message}`);
+            if (imageMode === "coze") {
+              imageIssues.push(`${file.name} 的 Coze 去背失败，已回退为原图导入：${message}`);
+            } else {
+              imageIssues.push(`${file.name} 处理失败，已回退为原图导入：${message}`);
+            }
             normalizedImage = await normalizeImageForFigma(file, {
               zoomOutFactor: 1.14,
-              removeBackground: false
+              mode: "none"
             });
           }
 
@@ -346,16 +501,42 @@
         }
 
         state.imageMap = imageMap;
+        state.processedImageMode = imageMode;
         state.duplicateImageIds = duplicateImageIds;
         state.imageIssues = imageIssues;
         rebuildMatches();
         render();
+      }
 
-        if (shouldRemoveBackground) {
-          imageStatus.textContent = imageIssues.length
-            ? `本地去背已完成，但有 ${imageIssues.length} 张回退为原图导入。`
-            : `本地去背已完成，共处理 ${imageMap.size} 张图片。`;
+      function getSelectedImageMode() {
+        return imageModeInput.value || "none";
+      }
+
+      function getCozeConfig() {
+        return {
+          token: cozeTokenInput.value.trim(),
+          workflowId: cozeWorkflowInput.value.trim() || DEFAULT_COZE_WORKFLOW_ID,
+          inputKey: cozeInputKeyInput.value.trim() || DEFAULT_COZE_INPUT_KEY,
+          outputKey: cozeOutputKeyInput.value.trim() || DEFAULT_COZE_OUTPUT_KEY
+        };
+      }
+
+      function getImageLoadingText(mode, current, total) {
+        const prefix = current > 0 && total > 0 ? `正在处理第 ${current}/${total} 张` : "正在处理图片";
+        if (mode === "coze") {
+          return `${prefix}，并调用 Coze 工作流去背...`;
         }
+        return `${prefix}...`;
+      }
+
+      function getImageReadyText(mode, count, issueCount) {
+        if (mode === "coze") {
+          return issueCount
+            ? `已读取 ${count} 张图片，Coze 去背完成，其中 ${issueCount} 张回退为原图。`
+            : `已读取 ${count} 张图片，Coze 去背已完成。`;
+        }
+
+        return `已读取 ${count} 张图片，当前为原图模式，不会自动去背。`;
       }
 
       function rebuildMatches() {
@@ -375,8 +556,12 @@
           : "尚未加载 CSV。";
 
         imageStatus.textContent = state.imageMap.size
-          ? `已读取 ${state.imageMap.size} 张图片。`
+          ? getImageReadyText(state.processedImageMode, state.imageMap.size, state.imageIssues.length)
           : "尚未加载图片。";
+
+        if (state.imageMap.size && state.processedImageMode !== getSelectedImageMode()) {
+          imageStatus.textContent += " 当前处理方式已切换，如需重新应用请再次选择图片。";
+        }
 
         const matchedCount = state.matches.filter((item) => item.image).length;
         const missingCount = state.matches.filter((item) => !item.image).length;
@@ -653,15 +838,17 @@
       async function normalizeImageForFigma(file, options = {}) {
         const colors = await deriveDraftColors(file);
         const zoomOutFactor = Math.max(1, Number(options.zoomOutFactor) || 1);
-        const shouldRemoveBackground = Boolean(options.removeBackground);
+        const imageMode = options.mode || "none";
 
         const url = URL.createObjectURL(file);
         try {
           const image = await loadImage(url);
           const alreadyTransparent = imageHasMeaningfulTransparency(image);
-          const source = shouldRemoveBackground
-            ? (alreadyTransparent ? image : await removeBackgroundLocally(image))
-            : image;
+          let source = image;
+
+          if (!alreadyTransparent && imageMode === "coze") {
+            source = await removeBackgroundWithCoze(file, options.cozeConfig || {});
+          }
 
           return {
             bytes: await renderImageWithPadding(source, zoomOutFactor),
@@ -672,225 +859,50 @@
         }
       }
 
-      async function getLocalImageSegmenter() {
-        if (!localSegmenterPromise) {
-          localSegmenterPromise = (async () => {
-            const vision = await loadVisionRuntime();
-            const visionFileset = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_REMOTE_WASM_URL);
-            const segmenter = await vision.ImageSegmenter.createFromOptions(visionFileset, {
-              baseOptions: {
-                modelAssetPath: LOCAL_SEGMENTER_MODEL_URL,
-                delegate: "CPU"
-              },
-              runningMode: "IMAGE",
-              outputCategoryMask: true,
-              outputConfidenceMasks: false
-            });
-
-            return {
-              segmenter,
-              labels: segmenter.getLabels() || []
-            };
-          })().catch((error) => {
-            localSegmenterPromise = null;
-            throw error;
-          });
+      async function removeBackgroundWithCoze(file, config) {
+        if (!config || !config.token) {
+          throw new Error("缺少 Coze Token。");
         }
 
-        return localSegmenterPromise;
+        const fileBytes = new Uint8Array(await file.arrayBuffer());
+        const result = await requestCozeBackgroundRemoval({
+          fileName: file.name,
+          mimeType: file.type || guessMimeType(file.name),
+          bytes: Array.from(fileBytes),
+          config
+        });
+
+        return await loadImageFromBytes(result.bytes, result.mimeType || "image/png");
       }
 
-      async function loadVisionRuntime() {
-        try {
-          return await import(MEDIAPIPE_REMOTE_MODULE_URL);
-        } catch (remoteError) {
-          const localModuleUrl = new URL("./vendor/mediapipe/vision_bundle.mjs", window.location.href).href;
-          try {
-            return await import(localModuleUrl);
-          } catch (localError) {
-            const remoteMessage = remoteError instanceof Error ? remoteError.message : String(remoteError);
-            const localMessage = localError instanceof Error ? localError.message : String(localError);
-            throw new Error(`运行库加载失败。远程：${remoteMessage}；本地：${localMessage}`);
-          }
-        }
-      }
+      function requestCozeBackgroundRemoval(payload) {
+        const requestId = state.nextCozeRequestId;
+        state.nextCozeRequestId += 1;
 
-      async function removeBackgroundLocally(image) {
-        const { segmenter, labels } = await getLocalImageSegmenter();
-        const result = segmenter.segment(image);
+        return new Promise((resolve, reject) => {
+          state.cozeRequests.set(requestId, { resolve, reject });
 
-        try {
-          if (!result.categoryMask) {
-            throw new Error("模型没有返回可用的分割蒙版。");
-          }
-
-          const categoryMask = result.categoryMask;
-          const maskData = categoryMask.getAsUint8Array();
-          const foregroundSet = buildForegroundCategorySet(labels);
-          const refinedBinaryMask = refineBinaryMask(
-            maskData,
-            categoryMask.width,
-            categoryMask.height,
-            foregroundSet,
-            labels.length
+          parent.postMessage(
+            {
+              pluginMessage: {
+                type: "coze-remove-background",
+                requestId,
+                payload
+              }
+            },
+            "*"
           );
-          const binaryMaskCanvas = document.createElement("canvas");
-          const binaryMaskContext = binaryMaskCanvas.getContext("2d");
-          binaryMaskCanvas.width = categoryMask.width;
-          binaryMaskCanvas.height = categoryMask.height;
+        });
+      }
 
-          const maskImageData = binaryMaskContext.createImageData(categoryMask.width, categoryMask.height);
-          for (let i = 0; i < refinedBinaryMask.length; i += 1) {
-            const alpha = refinedBinaryMask[i] ? 255 : 0;
-            const offset = i * 4;
-            maskImageData.data[offset] = 255;
-            maskImageData.data[offset + 1] = 255;
-            maskImageData.data[offset + 2] = 255;
-            maskImageData.data[offset + 3] = alpha;
-          }
-          binaryMaskContext.putImageData(maskImageData, 0, 0);
-
-          const sourceWidth = image.naturalWidth || image.width;
-          const sourceHeight = image.naturalHeight || image.height;
-          const fullMaskCanvas = document.createElement("canvas");
-          const fullMaskContext = fullMaskCanvas.getContext("2d");
-          fullMaskCanvas.width = sourceWidth;
-          fullMaskCanvas.height = sourceHeight;
-          fullMaskContext.imageSmoothingEnabled = true;
-          fullMaskContext.filter = "blur(1.2px)";
-          fullMaskContext.drawImage(binaryMaskCanvas, 0, 0, sourceWidth, sourceHeight);
-
-          const outputCanvas = document.createElement("canvas");
-          const outputContext = outputCanvas.getContext("2d");
-          outputCanvas.width = sourceWidth;
-          outputCanvas.height = sourceHeight;
-          outputContext.clearRect(0, 0, sourceWidth, sourceHeight);
-          outputContext.drawImage(image, 0, 0, sourceWidth, sourceHeight);
-          outputContext.globalCompositeOperation = "destination-in";
-          outputContext.drawImage(fullMaskCanvas, 0, 0, sourceWidth, sourceHeight);
-          outputContext.globalCompositeOperation = "source-over";
-
-          return outputCanvas;
+      async function loadImageFromBytes(bytes, mimeType) {
+        const blob = new Blob([normalizeBinary(bytes)], { type: mimeType || "image/png" });
+        const objectUrl = URL.createObjectURL(blob);
+        try {
+          return await loadImage(objectUrl);
         } finally {
-          result.close();
+          URL.revokeObjectURL(objectUrl);
         }
-      }
-
-      function buildForegroundCategorySet(labels) {
-        if (!labels.length) {
-          return null;
-        }
-
-        const foreground = new Set();
-        for (let index = 0; index < labels.length; index += 1) {
-          const label = String(labels[index] || "").trim().toLowerCase();
-          if (!label) {
-            if (index > 0) {
-              foreground.add(index);
-            }
-            continue;
-          }
-
-          if (!/(^background$|^bg$|unknown|other)/i.test(label)) {
-            foreground.add(index);
-          }
-        }
-
-        return foreground;
-      }
-
-      function shouldKeepSegmentPixel(categoryIndex, foregroundSet, labelCount) {
-        if (foregroundSet && foregroundSet.size) {
-          return foregroundSet.has(categoryIndex);
-        }
-
-        if (labelCount > 1) {
-          return categoryIndex > 0;
-        }
-
-        return categoryIndex > 0;
-      }
-
-      function refineBinaryMask(maskData, width, height, foregroundSet, labelCount) {
-        let binary = new Uint8Array(maskData.length);
-
-        for (let i = 0; i < maskData.length; i += 1) {
-          binary[i] = shouldKeepSegmentPixel(maskData[i], foregroundSet, labelCount) ? 1 : 0;
-        }
-
-        // Close small holes first so glasses and other tiny accessories are less likely to disappear.
-        binary = erodeBinaryMask(dilateBinaryMask(binary, width, height, 1), width, height, 1);
-
-        // Add a very small extra expansion to keep fragile edges from breaking apart.
-        binary = dilateBinaryMask(binary, width, height, 1);
-
-        return binary;
-      }
-
-      function dilateBinaryMask(source, width, height, radius) {
-        const output = new Uint8Array(source.length);
-
-        for (let y = 0; y < height; y += 1) {
-          for (let x = 0; x < width; x += 1) {
-            let found = 0;
-            for (let offsetY = -radius; offsetY <= radius && !found; offsetY += 1) {
-              const sampleY = y + offsetY;
-              if (sampleY < 0 || sampleY >= height) {
-                continue;
-              }
-
-              for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-                const sampleX = x + offsetX;
-                if (sampleX < 0 || sampleX >= width) {
-                  continue;
-                }
-
-                if (source[sampleY * width + sampleX]) {
-                  found = 1;
-                  break;
-                }
-              }
-            }
-
-            output[y * width + x] = found;
-          }
-        }
-
-        return output;
-      }
-
-      function erodeBinaryMask(source, width, height, radius) {
-        const output = new Uint8Array(source.length);
-
-        for (let y = 0; y < height; y += 1) {
-          for (let x = 0; x < width; x += 1) {
-            let keep = 1;
-            for (let offsetY = -radius; offsetY <= radius && keep; offsetY += 1) {
-              const sampleY = y + offsetY;
-              if (sampleY < 0 || sampleY >= height) {
-                keep = 0;
-                break;
-              }
-
-              for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-                const sampleX = x + offsetX;
-                if (sampleX < 0 || sampleX >= width) {
-                  keep = 0;
-                  break;
-                }
-
-                if (!source[sampleY * width + sampleX]) {
-                  keep = 0;
-                  break;
-                }
-              }
-            }
-
-            output[y * width + x] = keep;
-          }
-        }
-
-        return output;
       }
 
       async function renderImageWithPadding(imageSource, zoomOutFactor) {
@@ -1053,6 +1065,70 @@
 
       function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
+      }
+
+      function normalizeBinary(rawBytes) {
+        if (rawBytes instanceof Uint8Array) {
+          return rawBytes;
+        }
+
+        if (rawBytes instanceof ArrayBuffer) {
+          return new Uint8Array(rawBytes);
+        }
+
+        if (Array.isArray(rawBytes)) {
+          return Uint8Array.from(rawBytes);
+        }
+
+        if (rawBytes && rawBytes.buffer instanceof ArrayBuffer) {
+          return new Uint8Array(rawBytes.buffer);
+        }
+
+        throw new Error("无法识别图片字节数据。");
+      }
+
+      function formatPluginError(value) {
+        if (typeof value === "string") {
+          return value;
+        }
+
+        if (value && typeof value === "object") {
+          for (const key of ["message", "msg", "error", "statusText", "name"]) {
+            const candidate = value[key];
+            if (typeof candidate === "string" && candidate.trim()) {
+              return candidate.trim();
+            }
+          }
+
+          try {
+            const json = JSON.stringify(value);
+            if (json && json !== "{}") {
+              return json;
+            }
+          } catch (error) {
+            // Ignore and fall through.
+          }
+        }
+
+        return String(value || "");
+      }
+
+      function guessMimeType(fileName) {
+        const extension = String(fileName || "")
+          .toLowerCase()
+          .split(".")
+          .pop();
+
+        if (extension === "jpg" || extension === "jpeg") {
+          return "image/jpeg";
+        }
+        if (extension === "webp") {
+          return "image/webp";
+        }
+        if (extension === "gif") {
+          return "image/gif";
+        }
+        return "image/png";
       }
 
       function escapeHtml(value) {
