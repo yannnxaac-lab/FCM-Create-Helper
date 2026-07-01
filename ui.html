@@ -369,7 +369,11 @@
             if (message.ok) {
               pending.resolve(message.payload || {});
             } else {
-              pending.reject(new Error(formatPluginError(message.error) || "Coze 去背失败。"));
+              const error = new Error(formatPluginError(message.error) || "Coze 去背失败。");
+              if (message.manualDownloadUrl) {
+                error.manualDownloadUrl = message.manualDownloadUrl;
+              }
+              pending.reject(error);
             }
           }
           return;
@@ -478,7 +482,14 @@
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             if (imageMode === "coze") {
-              imageIssues.push(`${file.name} 的 Coze 去背失败，已回退为原图导入：${message}`);
+              const warning = {
+                text: `${file.name} 的 Coze 去背失败，已回退为原图导入：${message}`
+              };
+              if (error && typeof error === "object" && typeof error.manualDownloadUrl === "string" && error.manualDownloadUrl) {
+                warning.link = error.manualDownloadUrl;
+                warning.linkLabel = `${file.name} 的 Coze 短链`;
+              }
+              imageIssues.push(warning);
             } else {
               imageIssues.push(`${file.name} 处理失败，已回退为原图导入：${message}`);
             }
@@ -608,7 +619,24 @@
 
         for (const warning of warnings) {
           const item = document.createElement("li");
-          item.textContent = warning;
+          if (warning && typeof warning === "object" && !Array.isArray(warning)) {
+            const text = document.createElement("span");
+            text.textContent = warning.text || "";
+            item.appendChild(text);
+
+            if (warning.link) {
+              const separator = document.createTextNode(" ");
+              const anchor = document.createElement("a");
+              anchor.href = warning.link;
+              anchor.textContent = warning.linkLabel || "打开短链";
+              anchor.target = "_blank";
+              anchor.rel = "noreferrer noopener";
+              item.appendChild(separator);
+              item.appendChild(anchor);
+            }
+          } else {
+            item.textContent = warning;
+          }
           warningList.appendChild(item);
         }
       }

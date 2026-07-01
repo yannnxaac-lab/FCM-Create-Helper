@@ -65,6 +65,7 @@ figma.ui.onmessage = async (msg) => {
 
 async function handleCozeRemoveBackground(msg) {
   const requestId = msg.requestId;
+  let outputUrl = "";
   try {
     const payload = msg.payload || {};
     const fileName = typeof payload.fileName === "string" ? payload.fileName : "image.png";
@@ -90,7 +91,7 @@ async function handleCozeRemoveBackground(msg) {
       outputKey: config.outputKey,
       fileId
     }));
-    const outputUrl = unwrapCozeFileReference(output);
+    outputUrl = unwrapCozeFileReference(output);
 
     if (!outputUrl) {
       throw new Error("没有从 Coze 工作流中拿到可用的抠图结果。");
@@ -108,11 +109,13 @@ async function handleCozeRemoveBackground(msg) {
     });
   } catch (error) {
     const message = unknownErrorToMessage(error);
+    const manualDownloadUrl = extractHostFromUrl(outputUrl) === "s.coze.cn" ? outputUrl : "";
     figma.ui.postMessage({
       type: "coze-remove-background-result",
       requestId,
       ok: false,
-      error: message
+      error: message,
+      manualDownloadUrl
     });
   }
 }
